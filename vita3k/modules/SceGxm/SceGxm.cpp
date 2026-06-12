@@ -2010,8 +2010,11 @@ EXPORT(int, sceGxmDestroyContext, Ptr<SceGxmContext> context) {
     TRACY_FUNC(sceGxmDestroyContext, context);
     if (!context)
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
-
-    renderer::destroy_context(*emuenv.renderer, context.get(emuenv.mem)->renderer);
+        
+    SceGxmContext *ctx = context.get(emuenv.mem);
+    renderer::destroy_context(*emuenv.renderer, ctx->renderer);
+    
+    ctx->~SceGxmContext();
 
     return 0;
 }
@@ -2021,19 +2024,33 @@ EXPORT(int, sceGxmDestroyDeferredContext, SceGxmContext *deferredContext) {
     if (!deferredContext) {
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
     }
-    return UNIMPLEMENTED();
+    
+    if (deferredContext->curr_command_list) {
+        deferredContext->free_command_list(deferredContext->curr_command_list);
+        deferredContext->curr_command_list = nullptr;
+    }
+    
+    if (deferredContext->renderer) {
+        renderer::destroy_context(*emuenv.renderer, deferredContext->renderer);
+    }
+    
+    deferredContext->~SceGxmContext();
+
+    return 0;
 }
 
 EXPORT(int, sceGxmDestroyRenderTarget, Ptr<SceGxmRenderTarget> renderTarget) {
     TRACY_FUNC(sceGxmDestroyRenderTarget, renderTarget);
     MemState &mem = emuenv.mem;
-
     if (!renderTarget)
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
     if (!renderTarget.valid(mem))
         return RET_ERROR(SCE_GXM_ERROR_DRIVER);
 
-    renderer::destroy_render_target(*emuenv.renderer, renderTarget.get(mem)->renderer);
+    SceGxmRenderTarget *rt = renderTarget.get(mem);
+    renderer::destroy_render_target(*emuenv.renderer, rt->renderer);
+    
+    rt->~SceGxmRenderTarget();
 
     free(mem, renderTarget);
 
@@ -4451,8 +4468,14 @@ EXPORT(int, sceGxmShaderPatcherDestroy, Ptr<SceGxmShaderPatcher> shaderPatcher) 
     TRACY_FUNC(sceGxmShaderPatcherDestroy, shaderPatcher);
     if (!shaderPatcher)
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
-
-    free_callbacked(emuenv, thread_id, shaderPatcher.get(emuenv.mem), shaderPatcher);
+        
+    SceGxmShaderPatcher *patcher = shaderPatcher.get(emuenv.mem);
+    
+    patcher->vertex_program_cache.clear();
+    patcher->fragment_program_cache.clear();
+    patcher->~SceGxmShaderPatcher();
+    
+    free_callbacked(emuenv, thread_id, patcher, shaderPatcher.address());
 
     return 0;
 }
