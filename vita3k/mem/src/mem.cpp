@@ -330,26 +330,45 @@ bool add_protect(MemState &state, Address addr, const uint32_t size, const MemPe
     ProtectSegmentInfo protect(size, perm);
     align_to_page(state, addr, protect.size);
 
+    // 🦆 FIX: Save the exact bounds of the NEW protection request
+    const Address new_protect_start = addr;
+    const Address new_protect_end = addr + protect.size;
+
     ProtectBlockInfo block;
     block.size = size;
     block.callback = callback;
 
-    protect.blocks.emplace(addr, std::move(block));
+    protect.blocks.emplace(new_protect_start, std::move(block));
 
-    auto it = state.protect_tree.lower_bound(addr);
-    if (it == state.protect_tree.end() || it->first + it->second.size <= addr) {
+    auto it = state.protect_tree.lower_bound(new_protect_start);
+    if (it == state.protect_tree.end() || it->first + it->second.size <= new_protect_start) {
         if (it == state.protect_tree.begin())
             it = state.protect_tree.end();
         else
             --it;
     }
 
-    while (it != state.protect_tree.end() && it->first < addr + size) {
+    while (it != state.protect_tree.end() && it->first < new_protect_end) {
         const Address start = std::min(it->first, addr);
         protect.size = std::max(it->first + it->second.size, addr + protect.size) - start;
         addr = start;
-        protect.blocks.merge(it->second.blocks); // transfer blocks to the new protect
         protect.perm = most_restrictive_perm(protect.perm, it->second.perm);
+
+        // 🦆 FIX: Prevent callback accumulation! 
+        // Discard old blocks that are completely covered by the new protection.
+        for (auto block_it = it->second.blocks.begin(); block_it != it->second.blocks.end(); ) {
+            Address block_start = block_it->first;
+            Address block_end = block_start + block_it->second.size;
+            
+            // If the old block is fully inside the new protection, it's redundant. Erase it.
+            if (block_start >= new_protect_start && block_end <= new_protect_end) {
+                block_it = it->second.blocks.erase(block_it);
+            } else {
+                ++block_it;
+            }
+        }
+
+        protect.blocks.merge(it->second.blocks); // transfer remaining (non-redundant) blocks to the new protect
 
         if (it == state.protect_tree.begin()) {
             state.protect_tree.erase(it);

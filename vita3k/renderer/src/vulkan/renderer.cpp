@@ -1524,7 +1524,7 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
     const bool is_buffer_small = (size < 3 * KiB(4));
 
     if (is_buffer_small && always_trap) {
-        // overwise we may end up with trapping nothing
+        // otherwise we may end up with trapping nothing
         cover_everything = true;
     } else if (is_buffer_small) {
         // not big enough to apply buffer trapping
@@ -1592,8 +1592,15 @@ TrappedBuffer *BufferTrapping::access_buffer(Address addr, uint32_t size, MemSta
         aligned_addr = align(addr, KiB(4));
         aligned_size = align_down(addr + size - aligned_addr, KiB(4));
     }
-    add_protect(mem, aligned_addr, aligned_size, MemPerm::ReadOnly, [it](Address addr, bool write) {
-        it->second.dirty = true;
+
+    // 🦆 FIX: Capture `this` and `addr` instead of the iterator `it`.
+    // If the buffer is erased from `trapped_buffers` before the page fault triggers, 
+    // capturing `it` causes a Use-After-Free. Looking it up safely by `addr` prevents this.
+    add_protect(mem, aligned_addr, aligned_size, MemPerm::ReadOnly, [this, addr](Address fault_addr, bool write) {
+        auto trap_it = this->trapped_buffers.find(addr);
+        if (trap_it != this->trapped_buffers.end()) {
+            trap_it->second.dirty = true;
+        }
         return true;
     });
 
